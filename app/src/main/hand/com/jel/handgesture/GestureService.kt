@@ -44,6 +44,8 @@ class GestureService : LifecycleService() {
     companion object {
         const val ACTION_STOP = "com.jel.handgesture.STOP"
         const val ACTION_TOGGLE = "com.jel.handgesture.TOGGLE"
+        const val ACTION_POINTER = "com.jel.handgesture.POINTER"
+        const val ACTION_RELOAD = "com.jel.handgesture.RELOAD"
         private const val CHANNEL = "gesture"
         private const val NOTIF_ID = 1
         private const val TAG = "GestureService"
@@ -86,6 +88,14 @@ class GestureService : LifecycleService() {
                 notifyState()
                 return START_NOT_STICKY
             }
+            ACTION_POINTER -> if (started) {
+                engine?.requestPointer(null)
+                return START_NOT_STICKY
+            }
+            ACTION_RELOAD -> if (started) {
+                reload()
+                return START_NOT_STICKY
+            }
         }
         if (!started) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -106,12 +116,19 @@ class GestureService : LifecycleService() {
 
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_hand)
-        .setContentTitle(if (HandState.paused) "손 제스처 일시정지" else "손 제스처 인식 중")
+        .setContentTitle(
+            when {
+                HandState.paused -> "손 제스처 일시정지"
+                HandState.pointerMode.value -> "포인터 모드"
+                else -> "손 제스처 인식 중"
+            }
+        )
         .setContentText("전면 카메라 ${HandState.fpsRange}fps · 화면이 꺼지면 자동 정지")
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
         .addAction(0, if (HandState.paused) "재개" else "일시정지", action(ACTION_TOGGLE, 1))
+        .addAction(0, if (HandState.pointerMode.value) "제스처 모드" else "포인터 모드", action(ACTION_POINTER, 3))
         .addAction(0, "종료", action(ACTION_STOP, 2))
         .build()
 
@@ -127,7 +144,7 @@ class GestureService : LifecycleService() {
     }
 
     private fun setup() {
-        val sink = ControlSink()
+        val sink = ControlSink { ContextCompat.getMainExecutor(this).execute { if (started) notifyState() } }
         val e = GestureEngine(sink)
         engine = e
         tracker = try {
@@ -146,7 +163,23 @@ class GestureService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    /** 전면 카메라가 지원하는 60fps 구간 선택 (없으면 가장 높은 구간) */
+    /** 카메라 관련 설정(해상도·fps·인식 기준)을 바꿨을 때 다시 연결 */
+    private fun reload() {
+        val e = engine ?: return
+        provider?.unbindAll()
+        e.release()
+        val old = tracker
+        tracker = null
+        exec.execute { old?.close() }
+        tracker = try {
+            HandTracker(this, e::onFrame, e::onNoHand)
+        } catch (ex: Exception) {
+            Log.e(TAG, "모델 로드 실패", ex); stopSelf(); return
+        }
+        bindCamera()
+    }
+
+    /** 전면 카메라가 지원하는 60fps 구간 선택 (30fps 설정이면 30 구간, 없으면 가장 높은 구간) */
     private fun pickFpsRange(): Range<Int>? = try {
         val cm = getSystemService(CameraManager::class.java)
         var best: Range<Int>? = null
@@ -154,8 +187,13 @@ class GestureService : LifecycleService() {
             val ch = cm.getCameraCharacteristics(id)
             if (ch.get(CameraCharacteristics.LENS_FACING) != CameraCharacteristics.LENS_FACING_FRONT) continue
             val ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: continue
-            best = ranges.filter { it.upper >= 60 }.maxByOrNull { it.lower }
-                ?: ranges.maxByOrNull { it.upper * 1000 + it.lower }
+            best = if (Settings.fps60) {
+                ranges.filter { it.upper >= 60 }.maxByOrNull { it.lower }
+                    ?: ranges.maxByOrNull { it.upper * 1000 + it.lower }
+            } else {
+                ranges.filter { it.upper in 24..30 }.maxByOrNull { it.lower * 1000 + it.upper }
+                    ?: ranges.minByOrNull { it.upper }
+            }
             break
         }
         best
@@ -170,7 +208,10 @@ class GestureService : LifecycleService() {
         val builder = ImageAnalysis.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder().setResolutionStrategy(
-                    ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                    ResolutionStrategy(
+                        if (Settings.highRes) Size(1280, 720) else Size(640, 480),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    )
                 ).build()
             )
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -198,7 +239,7 @@ class GestureService : LifecycleService() {
     private fun unbindCamera() {
         provider?.unbindAll()
         HandState.frame = null
-        engine?.exitFocus()
+        engine?.release()
     }
 
     private fun displayRotation(): Int =
@@ -214,8 +255,9 @@ class GestureService : LifecycleService() {
         HandState.frame = null
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         provider?.unbindAll()
-        engine?.exitFocus()
+        engine?.release()
         engine = null
+        HandState.pointerMode.value = false
         val t = tracker
         tracker = null
         exec.execute { t?.close() }
@@ -226,7 +268,7 @@ class GestureService : LifecycleService() {
 }
 
 /** 인식 결과 → 접근성 서비스 실행 */
-class ControlSink : GestureSink {
+class ControlSink(private val onModeChanged: () -> Unit) : GestureSink {
     private val svc get() = ControlService.instance
 
     override fun onTrigger(t: Trigger) {
@@ -243,9 +285,16 @@ class ControlSink : GestureSink {
         svc?.launchApp(pkg, "$n  $label")
     }
 
-    override fun onFocusEnter() { HandState.lastEvent = "☝ 선택 모드"; svc?.focusEnter() }
-    override fun onFocusMove(dx: Int, dy: Int) { svc?.focusMove(dx, dy) }
-    override fun onFocusClick() { HandState.lastEvent = "🤏 선택"; svc?.focusClick() }
-    override fun onFocusExit() { svc?.focusExit() }
     override fun onProgress(label: String?, p: Float) { svc?.progress(label, p) }
+    override fun onWheel(dx: Float, dy: Float, ax: Float, ay: Float) { svc?.wheel(dx, dy, ax, ay) }
+    override fun onWheelEnd(fling: Boolean) { svc?.wheelEnd(fling) }
+
+    override fun onPointerMode(on: Boolean) {
+        HandState.lastEvent = if (on) "포인터 모드 켬" else "포인터 모드 끔"
+        svc?.pointerMode(on)
+        onModeChanged()
+    }
+
+    override fun onPointers(p: PointerFrame?) { svc?.pointers(p) }
+    override fun onPointerClick(xs: FloatArray, ys: FloatArray) { svc?.pointerClick(xs, ys) }
 }

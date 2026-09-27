@@ -66,9 +66,9 @@ class HandTracker(
             .setBaseOptions(base)
             .setRunningMode(RunningMode.LIVE_STREAM)
             .setNumHands(1)
-            .setMinHandDetectionConfidence(0.6f)
-            .setMinHandPresenceConfidence(0.5f)
-            .setMinTrackingConfidence(0.5f)
+            .setMinHandDetectionConfidence(Settings.detectConf.coerceIn(0.2f, 0.95f))
+            .setMinHandPresenceConfidence(Settings.trackConf.coerceIn(0.2f, 0.95f))
+            .setMinTrackingConfidence(Settings.trackConf.coerceIn(0.2f, 0.95f))
             .setResultListener { r: HandLandmarkerResult, img: MPImage -> onResult(r, img) }
             .setErrorListener { e: RuntimeException -> inFlight = false; Log.e(TAG, "landmarker error", e) }
             .build()
@@ -145,6 +145,7 @@ class HandTracker(
         HandState.latencyMs += 0.1f * ((now - r.timestampMs()) - HandState.latencyMs)
         val hands = r.landmarks()
         if (hands.isEmpty()) {
+            HandGeometry.reset()
             HandState.frame = null
             onNoHand(now)
             return

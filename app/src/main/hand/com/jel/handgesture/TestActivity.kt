@@ -110,9 +110,14 @@ class TestActivity : ComponentActivity() {
                 ),
                 style = MaterialTheme.typography.bodySmall,
             )
+            Text(
+                "확정 모양: ${HandState.stablePose.label} · ${if (HandState.pointerMode.value) "포인터 모드" else "제스처 모드"}" +
+                    if (HandState.wheel) " · 쓸는 중" else "",
+                style = MaterialTheme.typography.bodyMedium,
+            )
             Text("마지막 실행: ${HandState.lastEvent.ifEmpty { "-" }}", style = MaterialTheme.typography.bodyMedium)
             Text(
-                "이 화면에서도 제스처가 실제로 실행돼요. 손 전체가 보이게 30~60cm 거리에서 해 보세요.",
+                "이 화면에서도 제스처가 실제로 실행돼요. 손 모으기 = 쓸기, ✊ 유지 = 포인터 모드. 손 전체가 보이게 30~60cm 거리에서 해 보세요.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
