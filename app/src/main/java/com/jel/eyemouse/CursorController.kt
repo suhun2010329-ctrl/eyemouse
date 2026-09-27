@@ -226,7 +226,8 @@ class CursorController(ctx: Context) {
             }
         }
         if (n < 3) return null
-        for (k in 0 until EYE_DIM) acc[k] /= n
+        val inv = 1f / n
+        for (k in 0 until EYE_DIM) acc[k] = acc[k] * inv
         return acc
     }
 
