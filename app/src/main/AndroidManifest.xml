@@ -30,6 +30,11 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.EyeMouse.Fullscreen" />
 
+        <activity
+            android:name=".AnalysisActivity"
+            android:exported="false"
+            android:label="분석" />
+
         <service
             android:name=".TrackerService"
             android:exported="false"
