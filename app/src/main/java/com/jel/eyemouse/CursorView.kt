@@ -36,12 +36,12 @@ class CursorView(ctx: Context) : View(ctx) {
         val cx = width / 2f
         val cy = height / 2f
         fill.color = when (state) {
-            State.NORMAL -> 0xCC2F7CF6
-            State.CLOSED -> 0xCCFF9500
-            State.PAUSE_READY -> 0xCCAF52DE
-            State.PAUSED -> 0x99888888
+            State.NORMAL -> 0xCC2F7CF6.toInt()
+            State.CLOSED -> 0xCCFF9500.toInt()
+            State.PAUSE_READY -> 0xCCAF52DE.toInt()
+            State.PAUSED -> 0x99888888.toInt()
             State.LOST -> 0x55888888
-        }.toInt()
+        }
         val r = 10 * d
         c.drawCircle(cx, cy, r, fill)
         c.drawCircle(cx, cy, r, outline)
