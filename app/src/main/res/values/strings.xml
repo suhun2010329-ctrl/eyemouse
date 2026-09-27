@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">아이마우스</string>
-    <string name="a11y_description">전면 카메라로 머리·눈의 움직임을 추적해 화면에 커서를 표시하고, 응시 유지나 눈 깜빡임으로 터치를 대신 실행합니다. 카메라 영상은 기기 밖으로 전송되지 않습니다.</string>
+    <string name="a11y_description">전면 카메라로 머리·눈의 움직임을 추적해 화면에 커서를 표시하고, 응시 유지나 눈 깜빡임으로 터치를 대신 실행합니다. 누를 때 커서 근처 버튼 위치를 읽어 정확한 위치로 맞춥니다. 카메라 영상은 기기 밖으로 전송되지 않습니다.</string>
 </resources>
