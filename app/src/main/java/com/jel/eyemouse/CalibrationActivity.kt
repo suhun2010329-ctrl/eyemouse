@@ -109,6 +109,7 @@ class CalibrationActivity : ComponentActivity() {
 
     private suspend fun runFull() {
         if (!waitFace()) return
+        if (!checkDistance()) return
         say("폰을 평소처럼 25~35cm 거리에서 들고\n머리는 편하게 고정한 채\n눈으로만 점을 따라가세요", 4000)
 
         val all = ArrayList<GazeSample>()
@@ -169,6 +170,7 @@ class CalibrationActivity : ComponentActivity() {
 
     private suspend fun runQuick() {
         if (!waitFace()) return
+        if (!checkDistance()) return
         view.header = "빠른 보정 · 5점"
         say("점을 바라보세요", 1500)
         val (err, samples) = validate(0f)
@@ -181,6 +183,7 @@ class CalibrationActivity : ComponentActivity() {
 
     private suspend fun runTrain() {
         if (!waitFace()) return
+        if (!checkDistance()) return
         say("정밀 학습\n점을 바라보면 파란 링이 예측 위치예요\n링이 점에 가까워지도록 학습합니다", 3500)
         view.showLive = true
         val rnd = java.util.Random()
@@ -191,7 +194,7 @@ class CalibrationActivity : ComponentActivity() {
             view.progress = i / total.toFloat()
             val s = fixate(p, GazeTrainer.newGroup(), GazeTrainer.KIND_TRAIN, 1.2f)
             val e = meanError(s)
-            if (!e.isNaN()) errs += e
+            if (!e.isNaN()) { errs += e; GazeTrainer.recordError(s[0].x, s[0].y, e.toFloat()) }
             view.header = "정밀 학습 ${i + 1}/$total · 이번 오차 %.0fmm".format(e)
             GazeTrainer.addAll(s)
             if ((i + 1) % 4 == 0) GazeTrainer.refitAsync()
@@ -229,6 +232,35 @@ class CalibrationActivity : ComponentActivity() {
         return true
     }
 
+    /**
+     * 거리 맞추기: 25~42cm 사이에서 1.2초 유지되면 시작 (15초 지나면 그대로 진행)
+     * 학습 거리가 너무 가깝거나 멀면 이후 모든 자세에서 오차가 커지기 때문
+     */
+    private suspend fun checkDistance(): Boolean {
+        view.header = "거리 맞추기"
+        val t0 = now()
+        var okSince = -1L
+        while (now() - t0 < 15_000) {
+            val f = EyeMouseState.latest
+            val z = f?.v?.get(G.Z) ?: 0f
+            val cm = z / 10f
+            val inRange = z in 250f..420f
+            view.message = when {
+                f == null || now() - f.t > 500 -> "얼굴을 화면 정면에 맞춰 주세요"
+                z < 250f -> "조금 더 멀리 (지금 %.0fcm)\n권장 25~42cm".format(cm)
+                z > 420f -> "조금 더 가까이 (지금 %.0fcm)\n권장 25~42cm".format(cm)
+                else -> "좋아요, 그대로 유지하세요 (%.0fcm)".format(cm)
+            }
+            if (inRange) {
+                if (okSince < 0) okSince = now()
+                if (now() - okSince >= 1200) { view.message = null; return true }
+            } else okSince = -1
+            delay(100)
+        }
+        view.message = null
+        return true
+    }
+
     /** 점을 옮기고, 눈이 도착할 시간을 준 뒤 고정 시선 샘플 수집 */
     private suspend fun fixate(p: PointF, group: Int, kind: Int, weight: Float): List<GazeSample> {
         view.moveTo(p, MOVE_MS)
@@ -251,15 +283,16 @@ class CalibrationActivity : ComponentActivity() {
             val f = EyeMouseState.latest
             if (f != null && f.t != lastT) {
                 lastT = f.t
-                if (min(f.blinkL, f.blinkR) < BLINK_SKIP) {
+                val stable = PoseSensor.gyroDps < 20f && QualityMonitor.state != TrackState.LOST
+                if (min(f.blinkL, f.blinkR) < BLINK_SKIP && stable) {
                     val tp = target(f.t)
                     out += GazeSample(
-                        f.eye.copyOf(),
+                        f.v.copyOf(),
                         tp.x * size.x / ppm.x, tp.y * size.y / ppm.y,
                         weight, group(f.t), kind,
                     )
                 }
-                if (view.showLive) view.live = predictPx(f.eye)
+                if (view.showLive) view.live = predictPx(f.v)
             }
             onTick?.invoke(now())
             delay(15)
@@ -276,7 +309,7 @@ class CalibrationActivity : ComponentActivity() {
             if (progressBase > 0f) view.progress = progressBase + 0.1f * i / VALID_POINTS.size
             val s = fixate(p, GazeTrainer.newGroup(), GazeTrainer.KIND_VALID, 1f)
             val e = meanError(s)
-            if (!e.isNaN()) errs += e
+            if (!e.isNaN()) { errs += e; GazeTrainer.recordError(s[0].x, s[0].y, e.toFloat()) }
             all += s
         }
         view.showLive = false

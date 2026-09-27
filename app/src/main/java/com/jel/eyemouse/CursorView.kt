@@ -9,7 +9,7 @@ import android.os.SystemClock
 import android.view.View
 
 class CursorView(ctx: Context) : View(ctx) {
-    enum class State { NORMAL, CLOSED, PAUSE_READY, PAUSED, LOST }
+    enum class State { NORMAL, DEGRADED, CLOSED, PAUSE_READY, PAUSED, LOST }
 
     var state = State.NORMAL
     var progress = 0f
@@ -37,10 +37,11 @@ class CursorView(ctx: Context) : View(ctx) {
         val cy = height / 2f
         fill.color = when (state) {
             State.NORMAL -> 0xCC2F7CF6.toInt()
+            State.DEGRADED -> 0xCCFFCC00.toInt()
             State.CLOSED -> 0xCCFF9500.toInt()
             State.PAUSE_READY -> 0xCCAF52DE.toInt()
             State.PAUSED -> 0x99888888.toInt()
-            State.LOST -> 0x55888888
+            State.LOST -> 0x99FF3B30.toInt()
         }
         val r = 10 * d
         c.drawCircle(cx, cy, r, fill)

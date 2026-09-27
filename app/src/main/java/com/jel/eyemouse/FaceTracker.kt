@@ -14,7 +14,10 @@ import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 
-/** CameraX 프레임 → MediaPipe Face Landmarker → FaceFeatures */
+/**
+ * CameraX 프레임(1280×960) → 절반 크기로 얼굴 랜드마크 검출,
+ * 원본 해상도는 눈 크롭 정밀 분석에 사용 → FaceFeatures
+ */
 class FaceTracker(
     context: Context,
     private val onFace: (FaceFeatures) -> Unit,
@@ -23,6 +26,7 @@ class FaceTracker(
     private val landmarker: FaceLandmarker
     private var lastTs = 0L
     @Volatile private var closed = false
+    private val frames = LinkedHashMap<Long, Bitmap>()
 
     init {
         val base = BaseOptions.builder()
@@ -48,17 +52,22 @@ class FaceTracker(
         if (closed) { proxy.close(); return }
         val rotation = proxy.imageInfo.rotationDegrees
         val src = try { proxy.toBitmap() } finally { proxy.close() }
-        // 회전 보정 + 좌우 반전(셀카 거울 방향 → 머리를 오른쪽으로 돌리면 x 증가)
+        // 회전 보정 + 좌우 반전(셀카 방향)
         val m = Matrix().apply {
             postRotate(rotation.toFloat())
             postScale(-1f, 1f)
         }
-        val bmp = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, false)
+        val full = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, false)
+        val small = Bitmap.createScaledBitmap(full, full.width / 2, full.height / 2, true)
         var ts = SystemClock.uptimeMillis()
         if (ts <= lastTs) ts = lastTs + 1
         lastTs = ts
+        synchronized(frames) {
+            frames[ts] = full
+            while (frames.size > 4) frames.remove(frames.keys.first())
+        }
         try {
-            landmarker.detectAsync(BitmapImageBuilder(bmp).build(), ts)
+            landmarker.detectAsync(BitmapImageBuilder(small).build(), ts)
         } catch (e: Exception) {
             Log.w(TAG, "detectAsync failed", e)
         }
@@ -66,16 +75,27 @@ class FaceTracker(
 
     private fun onResult(r: FaceLandmarkerResult, img: MPImage) {
         val now = SystemClock.uptimeMillis()
+        val full = synchronized(frames) {
+            val b = frames.remove(r.timestampMs())
+            val it = frames.keys.iterator()
+            while (it.hasNext()) { if (it.next() < r.timestampMs()) it.remove() }
+            b
+        }
         val faces = r.faceLandmarks()
-        if (faces.isEmpty()) { onNoFace(now); return }
+        if (faces.isEmpty() || full == null) { onNoFace(now); return }
         val blend = r.faceBlendshapes().orElse(null)?.firstOrNull()
-        val f = FeatureExtractor.extract(faces[0], blend, img.width, img.height, now)
+        val f = try {
+            FeatureExtractor.extract(faces[0], blend, full, now)
+        } catch (e: Exception) {
+            Log.w(TAG, "extract failed", e); null
+        }
         if (f == null) onNoFace(now) else onFace(f)
     }
 
     fun close() {
         closed = true
         landmarker.close()
+        synchronized(frames) { frames.clear() }
     }
 
     companion object { private const val TAG = "FaceTracker" }

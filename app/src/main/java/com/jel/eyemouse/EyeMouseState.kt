@@ -15,6 +15,8 @@ object EyeMouseState {
     @Volatile var screenH = 2520
     @Volatile var ppmX = 15.6f   // px per mm (Flip7 기본값)
     @Volatile var ppmY = 15.6f
+    /** 전면 카메라 초점거리 ÷ 센서 긴 변 (초점거리 px = 이 값 × 이미지 긴 변 px) */
+    @Volatile var focalRatio = 0.6f
 }
 
 fun realScreenSize(wm: WindowManager): Point =

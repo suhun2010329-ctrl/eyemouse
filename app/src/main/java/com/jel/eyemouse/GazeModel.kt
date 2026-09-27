@@ -8,7 +8,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sqrt
 
-/** 학습 샘플: 특징 벡터 + 그때 보고 있던 화면 위치(mm, 좌상단 기준, 세로 화면) */
+/** 학습 샘플: 특징 벡터(FEAT_DIM) + 그때 보고 있던 화면 위치(mm, 좌상단 기준, 세로 화면) */
 class GazeSample(
     val e: FloatArray,
     val x: Float,
@@ -21,7 +21,7 @@ class GazeSample(
 class FitResult(val model: GazeModel, val cvErrMm: Double)
 
 /**
- * 시선 특징 → 화면 좌표(mm) 회귀 모델.
+ * 눈 모양 특징 → 화면 좌표(mm) 다항 회귀. v3에서는 물리 모델이 남긴 잔차 보정용.
  * 눈 특징(홍채·눈꺼풀 6개)은 2차 다항식, 머리 자세 6개는 선형 + 시선×머리 교차항.
  * 릿지 정규화 강도는 '보던 점' 단위 교차검증으로 자동 선택.
  */

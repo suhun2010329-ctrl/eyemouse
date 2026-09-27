@@ -74,7 +74,12 @@ object Settings {
         get() = sp.getFloat("nY", Float.NaN)
         set(v) = sp.edit().putFloat("nY", v).apply()
 
-    /** 시선 모델(JSON, v2) */
+    /** 오차 지도용 측정점 [[x_mm, y_mm, err_mm], …] */
+    var errPoints: String?
+        get() = sp.getString("errPoints", null)
+        set(v) = sp.edit().putString("errPoints", v).apply()
+
+    /** 시선 모델(JSON, v3) */
     var gazeModel: String?
         get() = sp.getString("gazeModel", null)
         set(v) = sp.edit().putString("gazeModel", v).apply()

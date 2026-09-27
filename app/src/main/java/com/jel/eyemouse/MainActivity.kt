@@ -140,6 +140,12 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (running) "정지" else "시작") }
 
+            OutlinedButton(
+                onClick = { startActivity(Intent(this@MainActivity, AnalysisActivity::class.java)) },
+                enabled = camOk,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("분석 (거리 · 각도 · 품질 · 오차 지도)") }
+
             Section("커서 이동") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(mode == TrackMode.EYE, { mode = TrackMode.EYE; Settings.mode = mode }, { Text("시선(눈)") })
@@ -209,7 +215,7 @@ class MainActivity : ComponentActivity() {
             }
 
             Section("사용법") {
-                Hint("• 시선 모드: 누를 때 근처 버튼 중심으로 자동 맞춤, 그때의 눈 모양을 학습해 점점 정확해짐\n• 응시: 커서를 한곳에 멈추면 초록 링이 차고 탭\n• 깜빡임: 두 눈을 0.3~1.2초 감았다 뜨면 탭\n• 두 눈 2초 이상 감기: 일시정지/재개\n• 커서 색: 파랑=작동, 주황=눈 감음, 보라=일시정지 준비, 회색=정지/얼굴 없음")
+                Hint("• 시선 모드: 누를 때 근처 버튼 중심으로 자동 맞춤, 그때의 눈 모양을 학습해 점점 정확해짐\n• 응시: 커서를 한곳에 멈추면 초록 링이 차고 탭\n• 깜빡임: 두 눈을 0.3~1.2초 감았다 뜨면 탭\n• 두 눈 2초 이상 감기: 일시정지/재개\n• 커서 색: 파랑=좋음, 노랑=품질 저하/폰 흔들림, 빨강=추적 상실(클릭 차단), 주황=눈 감음, 보라=일시정지 준비, 회색=일시정지")
             }
             Spacer(Modifier.width(1.dp))
         }
