@@ -15,7 +15,7 @@ object Settings {
     }
 
     var mode: TrackMode
-        get() = enumOr(sp.getString("mode", null), TrackMode.HEAD)
+        get() = enumOr(sp.getString("mode", null), TrackMode.EYE)
         set(v) = sp.edit().putString("mode", v.name).apply()
 
     var clickMode: ClickMode
@@ -45,6 +45,26 @@ object Settings {
         get() = sp.getBoolean("invY", false)
         set(v) = sp.edit().putBoolean("invY", v).apply()
 
+    /** 클릭할 때 가까운 버튼 중심으로 자동 맞춤 */
+    var snap: Boolean
+        get() = sp.getBoolean("snap", true)
+        set(v) = sp.edit().putBoolean("snap", v).apply()
+
+    /** 사용하면서 계속 학습 */
+    var autoLearn: Boolean
+        get() = sp.getBoolean("autoLearn", true)
+        set(v) = sp.edit().putBoolean("autoLearn", v).apply()
+
+    /** 마지막 캘리브레이션 검증 오차(mm) */
+    var accuracyMm: Float
+        get() = sp.getFloat("accMm", Float.NaN)
+        set(v) = sp.edit().putFloat("accMm", v).apply()
+
+    /** 마지막 학습의 교차검증 오차(mm) */
+    var cvErrorMm: Float
+        get() = sp.getFloat("cvMm", Float.NaN)
+        set(v) = sp.edit().putFloat("cvMm", v).apply()
+
     /** 머리 모드 기준 자세 (NaN = 아직 없음) */
     var neutralX: Float
         get() = sp.getFloat("nX", Float.NaN)
@@ -54,7 +74,7 @@ object Settings {
         get() = sp.getFloat("nY", Float.NaN)
         set(v) = sp.edit().putFloat("nY", v).apply()
 
-    /** 시선 캘리브레이션 결과(JSON) */
+    /** 시선 모델(JSON, v2) */
     var gazeModel: String?
         get() = sp.getString("gazeModel", null)
         set(v) = sp.edit().putString("gazeModel", v).apply()

@@ -12,7 +12,9 @@ object EyeMouseState {
     @Volatile var paused = false
     @Volatile var latest: FaceFeatures? = null
     @Volatile var screenW = 1080
-    @Volatile var screenH = 2340
+    @Volatile var screenH = 2520
+    @Volatile var ppmX = 15.6f   // px per mm (Flip7 기본값)
+    @Volatile var ppmY = 15.6f
 }
 
 fun realScreenSize(wm: WindowManager): Point =

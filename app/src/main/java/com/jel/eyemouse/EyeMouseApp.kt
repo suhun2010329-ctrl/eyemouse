@@ -6,5 +6,6 @@ class EyeMouseApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Settings.init(this)
+        GazeTrainer.init(this)
     }
 }

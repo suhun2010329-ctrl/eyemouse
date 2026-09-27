@@ -99,7 +99,13 @@ class MainActivity : ComponentActivity() {
         var stab by remember(t) { mutableStateOf(Settings.stability) }
         var invX by remember(t) { mutableStateOf(Settings.invertX) }
         var invY by remember(t) { mutableStateOf(Settings.invertY) }
-        val hasModel = remember(t) { Settings.gazeModel != null }
+        var snap by remember(t) { mutableStateOf(Settings.snap) }
+        var autoLearn by remember(t) { mutableStateOf(Settings.autoLearn) }
+        val hasModel = remember(t) { GazeTrainer.model != null }
+        val sampleCount = remember(t) { GazeTrainer.count() }
+        val implicitCount = remember(t) { GazeTrainer.countImplicit() }
+        val acc = remember(t) { Settings.accuracyMm }
+        val cv = remember(t) { Settings.cvErrorMm }
         val ready = camOk && a11yOn
 
         Column(
@@ -136,39 +142,57 @@ class MainActivity : ComponentActivity() {
 
             Section("커서 이동") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(mode == TrackMode.EYE, { mode = TrackMode.EYE; Settings.mode = mode }, { Text("시선(눈)") })
                     FilterChip(mode == TrackMode.HEAD, { mode = TrackMode.HEAD; Settings.mode = mode }, { Text("머리 움직임") })
-                    FilterChip(mode == TrackMode.EYE, { mode = TrackMode.EYE; Settings.mode = mode }, { Text("시선") })
                 }
-                if (mode == TrackMode.HEAD) {
+                if (mode == TrackMode.EYE) {
+                    Hint("화면: ${DisplayProfile.name}")
+                    Hint(
+                        if (!hasModel) "아직 학습 전이에요. '전체 학습'을 먼저 해 주세요. (그 전엔 머리 모드로 동작)"
+                        else buildString {
+                            append("학습 데이터 ${sampleCount}개")
+                            if (implicitCount > 0) append(" (사용 중 학습 ${implicitCount}개)")
+                            if (!acc.isNaN()) append(" · 검증 오차 약 %.0fmm".format(acc))
+                            if (!cv.isNaN()) append(" · 예상 오차 약 %.0fmm".format(cv))
+                        }
+                    )
+                    Button(
+                        onClick = { CalibrationActivity.start(this@MainActivity, CalibrationActivity.FULL) },
+                        enabled = camOk,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (hasModel) "전체 다시 학습 (약 1분)" else "전체 학습 (약 1분)") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { CalibrationActivity.start(this@MainActivity, CalibrationActivity.QUICK) },
+                            enabled = camOk && hasModel,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("빠른 보정") }
+                        OutlinedButton(
+                            onClick = { CalibrationActivity.start(this@MainActivity, CalibrationActivity.TRAIN) },
+                            enabled = camOk && hasModel,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("정밀 학습") }
+                    }
+                    Hint("빠른 보정: 자세·거리가 바뀌었을 때 5점 / 정밀 학습: 무작위 20점으로 세밀하게 추가 학습")
+                    SwitchRow("버튼에 자동 맞춤", snap) { snap = it; Settings.snap = it }
+                    SwitchRow("사용하면서 계속 학습", autoLearn) { autoLearn = it; Settings.autoLearn = it }
+                    if (hasModel) {
+                        TextButton(onClick = { GazeTrainer.clear(); tick++ }) { Text("학습 데이터 초기화") }
+                    }
+                } else {
                     Hint("코끝 방향으로 커서가 움직입니다. 편한 자세에서 ‘센터 맞추기’를 누르세요.")
                     LabeledSlider("감도", gain, 2f..12f, "%.1f".format(gain)) { gain = it; Settings.headGain = it }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("좌우 반전", Modifier.weight(1f))
-                        Switch(invX, { invX = it; Settings.invertX = it })
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("상하 반전", Modifier.weight(1f))
-                        Switch(invY, { invY = it; Settings.invertY = it })
-                    }
+                    SwitchRow("좌우 반전", invX) { invX = it; Settings.invertX = it }
+                    SwitchRow("상하 반전", invY) { invY = it; Settings.invertY = it }
                     OutlinedButton(
                         onClick = { TrackerService.send(this@MainActivity, TrackerService.ACTION_RECENTER) },
                         enabled = running,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("센터 맞추기") }
-                } else {
-                    Hint(
-                        if (hasModel) "캘리브레이션 완료. 자세나 화면 방향이 바뀌면 다시 해 주세요."
-                        else "시선 모드는 캘리브레이션이 필요합니다. (그 전엔 머리 모드로 동작)"
-                    )
                 }
                 LabeledSlider("안정성", stab, 0f..1f, "${(stab * 100).roundToInt()}%") {
                     stab = it; Settings.stability = it
                 }
-                OutlinedButton(
-                    onClick = { startActivity(Intent(this@MainActivity, CalibrationActivity::class.java)) },
-                    enabled = camOk,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("시선 캘리브레이션 (9점)") }
             }
 
             Section("클릭 방식") {
@@ -185,7 +209,7 @@ class MainActivity : ComponentActivity() {
             }
 
             Section("사용법") {
-                Hint("• 응시: 커서를 한곳에 멈추면 초록 링이 차고 탭\n• 깜빡임: 두 눈을 0.3~1.2초 감았다 뜨면 탭\n• 두 눈 2초 이상 감기: 일시정지/재개\n• 커서 색: 파랑=작동, 주황=눈 감음, 보라=일시정지 준비, 회색=정지/얼굴 없음")
+                Hint("• 시선 모드: 누를 때 근처 버튼 중심으로 자동 맞춤, 그때의 눈 모양을 학습해 점점 정확해짐\n• 응시: 커서를 한곳에 멈추면 초록 링이 차고 탭\n• 깜빡임: 두 눈을 0.3~1.2초 감았다 뜨면 탭\n• 두 눈 2초 이상 감기: 일시정지/재개\n• 커서 색: 파랑=작동, 주황=눈 감음, 보라=일시정지 준비, 회색=정지/얼굴 없음")
             }
             Spacer(Modifier.width(1.dp))
         }
@@ -207,6 +231,14 @@ class MainActivity : ComponentActivity() {
             Text(label, Modifier.weight(1f))
             if (ok) Text("✓ 완료", color = MaterialTheme.colorScheme.primary)
             else TextButton(onClick = onClick) { Text(action) }
+        }
+    }
+
+    @Composable
+    private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, Modifier.weight(1f))
+            Switch(checked, onChange)
         }
     }
 
