@@ -115,6 +115,16 @@ class TestActivity : ComponentActivity() {
                     if (HandState.wheel) " · 쓸는 중" else "",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            val actLabel = when (HandState.activity) {
+                HandActivity.MOVING -> "손 움직임"
+                HandActivity.STILL -> "손 멈춤"
+                HandActivity.NO_HAND -> "손 없음 (절전)"
+                HandActivity.DEEP_IDLE -> "오래 손 없음 (깊은 절전)"
+            }
+            val heatLabel = when (HandState.heat) { 0 -> "정상"; 1 -> "주의"; else -> "심함" }
+            val hr = HandState.headroom
+            val room = if (hr.isNaN()) "" else " · 온도 여유 %.0f%%".format((1f - hr).coerceIn(0f, 1f) * 100)
+            Text("전력: $actLabel · 발열 $heatLabel$room", style = MaterialTheme.typography.bodySmall)
             Text("마지막 실행: ${HandState.lastEvent.ifEmpty { "-" }}", style = MaterialTheme.typography.bodyMedium)
             Text(
                 "이 화면에서도 제스처가 실제로 실행돼요. 손 모으기 = 쓸기, ✊ 유지 = 포인터 모드. 손 전체가 보이게 30~60cm 거리에서 해 보세요.",

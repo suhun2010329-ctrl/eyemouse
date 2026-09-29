@@ -100,6 +100,10 @@ class MainActivity : ComponentActivity() {
 
     private fun granted(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
+    private fun applyPower() {
+        if (HandState.running.value) GestureService.send(this, GestureService.ACTION_POWER)
+    }
+
     private fun reloadCamera() {
         if (HandState.running.value) GestureService.send(this, GestureService.ACTION_RELOAD)
     }
@@ -244,6 +248,15 @@ class MainActivity : ComponentActivity() {
                 PrefSlider("‘쓸기’ 한 번 거리", v, 0.2f..0.7f, { "화면의 ${(it * 100).roundToInt()}%" }, { Settings.swipeDistance }) { Settings.swipeDistance = it }
             }
 
+            // ── 발열·배터리 ──
+            Section("발열·배터리") {
+                PrefChoice("성능 모드", listOf("절전", "균형", "최고"), v, { Settings.perfMode }) { Settings.perfMode = it; applyPower() }
+                Hint("절전: 최대 30fps · 균형: 손을 움직일 때만 60fps, 멈추면 30fps · 최고: 손이 보이면 항상 60fps")
+                PrefSwitch("손이 없으면 절전 (15fps, 초당 10번만 확인)", v, { Settings.idleSaver }) { Settings.idleSaver = it; applyPower() }
+                PrefSwitch("발열 보호 (뜨거워지기 전에 fps 자동 낮춤)", v, { Settings.thermalGuard }) { Settings.thermalGuard = it; applyPower() }
+                Hint("휴대폰 온도가 오르기 시작하면 30fps, 뜨거우면 20fps로 낮추고 식으면 되돌려요. 화면이 꺼지면 카메라도 꺼져요.")
+            }
+
             // ── 손 인식·카메라 ──
             Section("손 인식·카메라") {
                 PrefSlider("손 감지 기준", v, 0.3f..0.9f, { "%.2f".format(it) }, { Settings.detectConf }, ::reloadCamera) { Settings.detectConf = it }
@@ -255,10 +268,6 @@ class MainActivity : ComponentActivity() {
                 PrefChoice("카메라 해상도", listOf("640×480 빠름", "1280×720 먼 거리"), v, { if (Settings.highRes) 1 else 0 }) {
                     Settings.highRes = it == 1; reloadCamera()
                 }
-                PrefChoice("카메라 프레임", listOf("60fps", "30fps 절전"), v, { if (Settings.fps60) 0 else 1 }) {
-                    Settings.fps60 = it == 0; reloadCamera()
-                }
-                PrefSwitch("대기 절전 (손 없을 때 처리량 1/3)", v, { Settings.idleSaver }) { Settings.idleSaver = it }
                 PrefSwitch("화면 상단에 동작 표시", v, { Settings.showHud }) { Settings.showHud = it }
                 TextButton(onClick = { Settings.resetTuning(); ver++; reloadCamera() }) { Text("인식·쓸기·포인터 설정 기본값으로") }
             }

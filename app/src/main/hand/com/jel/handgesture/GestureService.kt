@@ -16,11 +16,16 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Display
-import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -35,7 +40,7 @@ import java.util.concurrent.Executors
 
 /**
  * 백그라운드 손 인식 서비스 (카메라 포그라운드 서비스).
- * - 전면 카메라 640×480 @ 60fps
+ * - 전면 카메라 640×480, 손 상태·발열에 따라 60 / 30 / 20 / 15fps 자동 조절
  * - 화면이 꺼지면 카메라를 끄고, 켜지면 다시 켠다
  * - 알림에서 일시정지/재개/종료
  */
@@ -46,6 +51,7 @@ class GestureService : LifecycleService() {
         const val ACTION_TOGGLE = "com.jel.handgesture.TOGGLE"
         const val ACTION_POINTER = "com.jel.handgesture.POINTER"
         const val ACTION_RELOAD = "com.jel.handgesture.RELOAD"
+        const val ACTION_POWER = "com.jel.handgesture.POWER"
         private const val CHANNEL = "gesture"
         private const val NOTIF_ID = 1
         private const val TAG = "GestureService"
@@ -68,6 +74,23 @@ class GestureService : LifecycleService() {
     @Volatile private var tracker: HandTracker? = null
     private val exec: ExecutorService = Executors.newSingleThreadExecutor()
     private var screenOn = true
+
+    // ── 발열·배터리 관리 ──
+    private val mainH = Handler(Looper.getMainLooper())
+    private var camera: Camera? = null
+    private var ranges: List<Range<Int>> = emptyList()
+    private var curRange: Range<Int>? = null
+    private var act = HandActivity.MOVING
+    private var thermal = 0
+    private var headroomHot = 0
+    private var warned = 0
+    private var thermalListener: Any? = null
+    private val headroomPoll = object : Runnable {
+        override fun run() {
+            pollHeadroom()
+            mainH.postDelayed(this, 10_000)
+        }
+    }
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
@@ -94,6 +117,10 @@ class GestureService : LifecycleService() {
             }
             ACTION_RELOAD -> if (started) {
                 reload()
+                return START_NOT_STICKY
+            }
+            ACTION_POWER -> if (started) {
+                evaluate()
                 return START_NOT_STICKY
             }
         }
@@ -123,7 +150,7 @@ class GestureService : LifecycleService() {
                 else -> "손 제스처 인식 중"
             }
         )
-        .setContentText("전면 카메라 ${HandState.fpsRange}fps · 화면이 꺼지면 자동 정지")
+        .setContentText("손이 없으면 자동 절전 · 뜨거워지면 fps 자동 조절 · 화면 꺼지면 정지")
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
@@ -148,10 +175,11 @@ class GestureService : LifecycleService() {
         val e = GestureEngine(sink)
         engine = e
         tracker = try {
-            HandTracker(this, e::onFrame, e::onNoHand)
+            newTracker(e)
         } catch (ex: Exception) {
             Log.e(TAG, "모델 로드 실패", ex); stopSelf(); return
         }
+        startThermal()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON)
         }
@@ -172,33 +200,122 @@ class GestureService : LifecycleService() {
         tracker = null
         exec.execute { old?.close() }
         tracker = try {
-            HandTracker(this, e::onFrame, e::onNoHand)
+            newTracker(e)
         } catch (ex: Exception) {
             Log.e(TAG, "모델 로드 실패", ex); stopSelf(); return
         }
         bindCamera()
     }
 
-    /** 전면 카메라가 지원하는 60fps 구간 선택 (30fps 설정이면 30 구간, 없으면 가장 높은 구간) */
-    private fun pickFpsRange(): Range<Int>? = try {
+    private fun newTracker(e: GestureEngine) = HandTracker(this, e::onFrame, e::onNoHand) { a ->
+        mainH.post { act = a; evaluate() }
+    }
+
+    // ───────── 발열·배터리 관리 ─────────
+
+    /**
+     * 손 상태 × 성능 모드 × 발열 상태 → 카메라 fps.
+     *  손 움직임: 60 (절전 모드 30) · 손 멈춤: 30 (최고 모드 60) · 손 없음: 15
+     *  발열 '주의' → 최대 30, '심함' → 20 고정
+     */
+    private fun evaluate() {
+        val mode = Settings.perfMode
+        val idleSave = Settings.idleSaver
+        var target = when (act) {
+            HandActivity.MOVING -> if (mode == 0) 30 else 60
+            HandActivity.STILL -> if (mode == 2) 60 else 30
+            HandActivity.NO_HAND, HandActivity.DEEP_IDLE -> if (idleSave) 15 else if (mode == 0) 30 else 60
+        }
+        var heat = 0
+        if (Settings.thermalGuard) {
+            heat = maxOf(headroomHot, if (thermal >= 3) 2 else if (thermal >= 2) 1 else 0)
+            if (heat == 1) target = minOf(target, 30)
+            if (heat >= 2) target = minOf(target, 20)
+        }
+        HandState.heat = heat
+        HandState.activity = act
+        tracker?.let {
+            it.idleCap = if (heat >= 2 || mode == 0) 5 else 10
+            it.deepCap = if (heat >= 2 || mode == 0) 2 else 4
+        }
+        if (heat > warned) {
+            ControlService.instance?.notice(
+                if (heat >= 2) "🔥 휴대폰이 뜨거워서 인식을 20fps로 낮췄어요" else "휴대폰이 따뜻해져서 인식을 30fps로 낮췄어요",
+            )
+        }
+        warned = heat
+        applyFps(target)
+    }
+
+    /** 목표 fps 이상인 구간 중 가장 낮은 것 (같으면 고정 fps 구간 우선) */
+    private fun pickRange(target: Int): Range<Int>? {
+        if (ranges.isEmpty()) return null
+        return ranges.filter { it.upper >= target }.minWithOrNull(compareBy<Range<Int>> { it.upper }.thenByDescending { it.lower })
+            ?: ranges.maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
+    }
+
+    private fun applyFps(target: Int) {
+        val cam = camera ?: return
+        val r = pickRange(target) ?: return
+        if (r == curRange) return
+        curRange = r
+        try {
+            Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(
+                CaptureRequestOptions.Builder()
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, r)
+                    .build(),
+            )
+            HandState.fpsRange = if (r.lower == r.upper) "${r.upper}" else "${r.lower}–${r.upper}"
+        } catch (e: Exception) {
+            Log.w(TAG, "fps 변경 실패", e)
+        }
+    }
+
+    private fun startThermal() {
+        if (Build.VERSION.SDK_INT < 29) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        thermal = pm.currentThermalStatus
+        val l = PowerManager.OnThermalStatusChangedListener { st -> thermal = st; evaluate() }
+        try { pm.addThermalStatusListener(ContextCompat.getMainExecutor(this), l); thermalListener = l } catch (_: Exception) {}
+        mainH.post(headroomPoll)
+    }
+
+    private fun stopThermal() {
+        mainH.removeCallbacks(headroomPoll)
+        if (Build.VERSION.SDK_INT < 29) return
+        val l = thermalListener as? PowerManager.OnThermalStatusChangedListener ?: return
+        try { getSystemService(PowerManager::class.java)?.removeThermalStatusListener(l) } catch (_: Exception) {}
+        thermalListener = null
+    }
+
+    /** 10초 뒤 발열 예측치(1.0 = 성능 제한 시작). 제한 전에 미리 낮춘다 */
+    private fun pollHeadroom() {
+        if (Build.VERSION.SDK_INT < 30) return
+        val hr = try { getSystemService(PowerManager::class.java)?.getThermalHeadroom(10) ?: Float.NaN } catch (_: Exception) { Float.NaN }
+        HandState.headroom = hr
+        if (hr.isNaN()) return
+        val lvl = when {
+            hr >= 0.95f -> 2
+            hr >= 0.8f -> 1
+            hr < 0.7f -> 0
+            else -> minOf(headroomHot, 1)   // 0.7~0.8: 조금 식을 때까지 유지
+        }
+        if (lvl != headroomHot) { headroomHot = lvl; evaluate() }
+    }
+
+    /** 전면 카메라가 지원하는 fps 구간 목록 */
+    private fun loadRanges(): List<Range<Int>> = try {
         val cm = getSystemService(CameraManager::class.java)
-        var best: Range<Int>? = null
+        var list: List<Range<Int>> = emptyList()
         for (id in cm.cameraIdList) {
             val ch = cm.getCameraCharacteristics(id)
             if (ch.get(CameraCharacteristics.LENS_FACING) != CameraCharacteristics.LENS_FACING_FRONT) continue
-            val ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: continue
-            best = if (Settings.fps60) {
-                ranges.filter { it.upper >= 60 }.maxByOrNull { it.lower }
-                    ?: ranges.maxByOrNull { it.upper * 1000 + it.lower }
-            } else {
-                ranges.filter { it.upper in 24..30 }.maxByOrNull { it.lower * 1000 + it.upper }
-                    ?: ranges.minByOrNull { it.upper }
-            }
+            list = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList() ?: continue
             break
         }
-        best
+        list
     } catch (e: Exception) {
-        null
+        emptyList()
     }
 
     private fun bindCamera() {
@@ -217,17 +334,15 @@ class GestureService : LifecycleService() {
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setTargetRotation(displayRotation())
-        val range = pickFpsRange()
-        if (range != null) {
-            Camera2Interop.Extender(builder).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
-            HandState.fpsRange = if (range.lower == range.upper) "${range.upper}" else "${range.lower}–${range.upper}"
-        }
+        if (ranges.isEmpty()) ranges = loadRanges()
         val a = builder.build()
         a.setAnalyzer(exec) { proxy -> t.analyze(proxy) }
         analysis = a
         try {
             p.unbindAll()
-            p.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, a)
+            camera = p.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, a)
+            curRange = null
+            evaluate()
             HandState.running.value = true
             notifyState()
         } catch (e: Exception) {
@@ -238,6 +353,7 @@ class GestureService : LifecycleService() {
 
     private fun unbindCamera() {
         provider?.unbindAll()
+        camera = null
         HandState.frame = null
         engine?.release()
     }
@@ -254,7 +370,9 @@ class GestureService : LifecycleService() {
         HandState.running.value = false
         HandState.frame = null
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
+        stopThermal()
         provider?.unbindAll()
+        camera = null
         engine?.release()
         engine = null
         HandState.pointerMode.value = false

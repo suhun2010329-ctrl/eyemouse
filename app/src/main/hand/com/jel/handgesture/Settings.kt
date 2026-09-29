@@ -92,7 +92,12 @@ object Settings {
     /** 손 모양이 확정되기까지 연속으로 같아야 하는 프레임 수 */
     var poseFrames by I("poseFrames", 3)
     var highRes by B("highRes", false)
-    var fps60 by B("fps60", true)
+
+    // ── 발열·배터리 ──
+    /** 0 = 절전(최대 30fps), 1 = 균형(움직일 때만 60fps), 2 = 최고(손 있으면 항상 60fps) */
+    var perfMode by I("perfMode", 1)
+    /** 휴대폰이 뜨거워지면 fps를 자동으로 낮춤 */
+    var thermalGuard by B("thermalGuard", true)
     /** 손이 안 보이면 처리량을 1/3로 줄여 배터리 절약 */
     var idleSaver by B("idleSaver", true)
     var showHud by B("hud", true)

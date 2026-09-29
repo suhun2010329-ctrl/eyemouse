@@ -375,6 +375,9 @@ class ControlService : AccessibilityService() {
         }
     }
 
+    /** 서비스 쪽 안내 (발열 경고 등) */
+    fun notice(text: String) { main.post { showHud(text, 2500) } }
+
     fun pointers(p: PointerFrame?) { main.post { pointerView?.update(p) } }
 
     /** 후보 중 누를 수 있는 곳 위에 있는 포인터를 우선으로 한 곳만 클릭 */
